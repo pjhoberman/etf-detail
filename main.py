@@ -44,11 +44,12 @@ class StockAPI:
     def __init__(self):
         self.base_url = "https://www.alphavantage.co"
         self.api_key = os.getenv("ALPHA_VANTAGE_API_KEY")
+        self.cache_dir = "quotes"
     
     def get_time_series_daily(self, symbol: str):
         # check cache
         symbol = symbol.upper()
-        if os.path.isfile(f"{symbol}.json"):
+        if os.path.isfile(f"{self.cache_dir}/{symbol}.json"):
             with open(f"{symbol}.json") as file:
                 data = json.loads(file.read())
             # check last updated
@@ -60,7 +61,7 @@ class StockAPI:
         response = requests.get(q)
         j = response.json()
         
-        with open(f"{symbol}.json", "w") as file:
+        with open(f"{self.cache_dir}{symbol}.json", "w") as file:
             file.write(json.dumps(j))
         return j.get('Time Series (Daily)')
 
@@ -82,3 +83,7 @@ if __name__ == '__main__':
     print(f"last change was {aapl.daily[today].get('change_absolute')}")
     print(f"last change was {aapl.daily[today].get('change_percent')}")
 
+    tsla = Stock('TSLA')
+    print(tsla.daily)
+    print(f"last change was {tsla.daily[today].get('change_absolute')}")
+    print(f"last change was {tsla.daily[today].get('change_percent')}")
