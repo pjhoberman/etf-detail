@@ -3,9 +3,12 @@ from dotenv import load_dotenv
 import os
 import json
 from datetime import datetime, date, timedelta
+import time
 from bs4 import BeautifulSoup
 
 load_dotenv()
+
+API_LAST_CALL = None
 
 
 class ETF:
@@ -87,6 +90,8 @@ class AlphaVantage:
         self.cache_dir = "quotes"
     
     def get_time_series_daily(self, symbol: str):
+        global API_LAST_CALL
+        
         # check cache
         symbol = symbol.upper()
         if os.path.isfile(f"{self.cache_dir}/{symbol}.json"):
@@ -100,7 +105,10 @@ class AlphaVantage:
         
         print(f"API call for {symbol}")
         q = f"{self.base_url}/query?function=TIME_SERIES_DAILY&symbol={symbol}&apikey={self.api_key}"
+        while API_LAST_CALL and datetime.now() <= API_LAST_CALL + timedelta(seconds=(60/5)):
+            time.sleep(1)
         response = requests.get(q)
+        API_LAST_CALL = datetime.now()
         print(response)
         print(response.status_code)
         if response.status_code == 503:
@@ -108,6 +116,20 @@ class AlphaVantage:
             print(response.reason)
             return None
         j = response.json()
+        print(j)
+        if "Note" in j and "Thank you for using Alpha Vantage!" in j.get("Note"):
+            API_LAST_CALL += timedelta(minutes=1)
+            self.get_time_series_daily(symbol)
+            symbol = symbol.upper()
+            if os.path.isfile(f"{self.cache_dir}/{symbol}.json"):
+                with open(f"{self.cache_dir}/{symbol}.json") as file:
+                    data = json.loads(file.read())
+                # check last updated
+                if not data or not data.get('Meta Data'):
+                    return None
+                if data.get('Meta Data').get('3. Last Refreshed') == str(get_last_weekday()):
+                    return data.get('Time Series (Daily)')
+            
         
         with open(f"{self.cache_dir}/{symbol}.json", "w") as file:
             file.write(json.dumps(j))
