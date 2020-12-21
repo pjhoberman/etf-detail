@@ -5,6 +5,7 @@ import json
 from datetime import datetime, date, timedelta
 import time
 from bs4 import BeautifulSoup
+import yfinance as yf
 
 load_dotenv()
 
@@ -29,15 +30,58 @@ class ETF:
             if last_change:
                 last_change = f"{round(last_change, 2)}%"
             print(f"{holding}:{' '*(10-len(holding))}{last_change}")
+    
+    def today(self):
+        print("changes today")
+        etf_quote = Stock(self.symbol)
         
+        print("{:>15}{:>15}{:>15}{:>15}{:>15}{:>15}{:>15}".format("Ticker",
+                                                      "Current Price",
+                                                      "Day Change",
+                                                      "%",
+                                                      "weight",
+                                                      "weighted amount",
+                                                      "weighted %"))
 
+        print("{:>15}{:>15}{:>15}{:>15}{:>15}{:>15}{:>15}".format(etf_quote.symbol,
+                                                      etf_quote.current_price,
+                                                      round(float(etf_quote.day_change_amount), 2),
+                                                      round(float(etf_quote.day_change_percent) * 100, 2) if etf_quote.day_change_percent else '',
+                                                      "100%",
+                                                      "-",
+                                                      "-"
+                                                      )
+              )
+        print("\n")
+        for ticker, stock in self.holdings.items():
+            stock, weight = stock.values()
+            day_change_amount = float(stock.day_change_amount) if stock.day_change_amount else None
+            day_change_percent = float(stock.day_change_percent) if stock.day_change_percent else None
+            weight_float = float(weight.replace("%", "")) / 100
+            weighted_amount = round(day_change_amount * weight_float, 4) if day_change_amount else None
+            weighted_percent = round(day_change_percent * weight_float * 100, 4) if day_change_percent else None
+            print("{:>15}{:>15}{:>15}{:>15}{:>15}{:>15}{:>15}".format(ticker,
+                                                                      stock.current_price,
+                                                                      day_change_amount or '',
+                                                                      f"{round(day_change_percent * 100, 2)}%" or '',
+                                                                      weight,
+                                                                      weighted_amount or '',
+                                                                      f"{round(weighted_percent, 2)}%" or '',
+                                                                      ))
+            
+        
 class Stock:
     def __init__(self, symbol):
         self.symbol = symbol
         self.daily = {}
         self.last_updated = None
-        self.fill_daily()
-        self.generate_change()
+        # self.fill_daily()
+        # self.generate_change()
+        self.current_price = ""
+        self.current_price_last_updated = ""
+        self.day_change_percent = ""
+        self.day_change_amount = ""
+        self.get_current_price()
     
     def __str__(self):
         return self.symbol
@@ -81,6 +125,21 @@ class Stock:
             return self.daily[str(get_last_weekday())].get('change_absolute')
         except KeyError:
             return None
+    
+    def get_current_price(self):
+        iex = IexCloud()
+        quote = iex.get_quote(self.symbol)
+        if quote:
+            self.current_price = quote.get('latestPrice')
+            self.day_change_amount = quote.get('change')
+            self.day_change_percent = quote.get('changePercent')
+            self.current_price_last_updated = datetime.now()
+            
+            if not quote.get("change"):
+                self.day_change_amount = self.current_price - quote.get("previousClose")
+            
+            if not quote.get("changePercent"):
+                self.day_change_percent = (self.current_price - quote.get("previousClose")) / quote.get("previousClose")
 
 
 class AlphaVantage:
@@ -88,6 +147,17 @@ class AlphaVantage:
         self.base_url = "https://www.alphavantage.co"
         self.api_key = os.getenv("ALPHA_VANTAGE_API_KEY")
         self.cache_dir = "quotes"
+    
+    def get_price(self, symbol: str):
+        global API_LAST_CALL
+        
+        symbol = symbol.upper()
+        q = f"{self.base_url}/query?function=GLOBAL_QUOTE&symbol={symbol}&apikey={self.api_key}"
+        while API_LAST_CALL and datetime.now() <= API_LAST_CALL + timedelta(seconds=(60/5)):
+            time.sleep(1)
+        API_LAST_CALL = datetime.now()
+        response = requests.get(q)
+        print(response.json())
     
     def get_time_series_daily(self, symbol: str):
         global API_LAST_CALL
@@ -153,6 +223,9 @@ def scrape_etf_db(etf_symbol: str, force: bool = False):
         href = symbol.find('a')['href'].split("/")
         symbol = href[-1] if href[-1] else href[-2]  # '/stock/LSCC/' - dealing with trailing /
         percent = percent.text
+        if ":" in symbol:
+            ticker, exchange = symbol.split(":")
+            symbol = f"{exchange}:{ticker}"
         print(symbol)
         data[symbol] = percent
     
@@ -170,10 +243,41 @@ def get_last_weekday(dt=False):
         the_date -= timedelta(days=1)
     return the_date
 
+    
+class IexCloud:
+    def __init__(self, sandbox=False):
+        self.endpoint = "https://sandbox.iexapis.com/stable" if sandbox else "https://cloud.iexapis.com/stable"
+        self.api_key = os.getenv("IEX_CLOUD_SANDBOX_API_KEY") if sandbox else os.getenv('IEX_CLOUD_API_KEY')
+        self.params = {"token": self.api_key}
+    
+    def get_quote(self, symbol):
+        url = self.endpoint + f'/stock/{symbol}/quote/'
+        res = requests.get(url, params={"token": self.api_key})
+        if res.status_code != 200:
+            print(f"{symbol} - {res.status_code}: {res.reason}")
+            return None
+        # print(res.json())
+        return res.json()
+    
+    def get_price(self, symbol):
+        url = self.endpoint + f'/stock/{symbol}/price/'
+        res = requests.get(url, params=self.params)
+        print(res.json())
+        return res.json()
+    
+    def get_news(self, symbol, last=10):
+        url = self.endpoint + f"/stock/{symbol}/news/last/{last}"
+        res = requests.get(url, params=self.params)
+        return res.json()
+        
 
 if __name__ == '__main__':
     dt = date.today()
     today = datetime.combine(dt, datetime.min.time())
+    etf = ETF('btec')
+    etf.today()
+    # iex = IexCloud()
+    # iex.get_quote('aapl')
     #
     # aapl = Stock('AAPL')
     # print(aapl.daily)
@@ -189,6 +293,7 @@ if __name__ == '__main__':
     # ETF('qtum').last_day_change()
     
     # my etfs
-    etfs = ["driv", "tan", "lit", "arkk", "qtum", "btec", "dtec", "psct"]
-    for etf in etfs:
-        ETF(etf).last_day_change()
+    # etfs = ["driv", "tan", "lit", "arkk", "qtum", "btec", "dtec", "psct"]
+    # for etf in etfs:
+    #     ETF(etf).last_day_change()
+    # ETF("TAN").last_day_change()
